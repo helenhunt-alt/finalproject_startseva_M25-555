@@ -3,6 +3,8 @@
 import hashlib
 from datetime import datetime
 
+from .exceptions import InsufficientFundsError
+
 
 class User:
     def __init__(
@@ -98,7 +100,11 @@ class Wallet:
         if amount <= 0:
             raise ValueError("Сумма должна быть положительным числом")
         if amount > self.balance:
-            raise ValueError("Недостаточно средств")
+            raise InsufficientFundsError(
+                self.currency_code,
+                self.balance,
+                float(amount),
+            )
         self.balance -= float(amount)
 
     def get_balance_info(self) -> str:
@@ -106,13 +112,13 @@ class Wallet:
 
 
 class Portfolio:
-    def __init__(self, user: User, wallets: dict[str, Wallet] | None = None):
-        self._user = user
+    def __init__(self, user_id: int, wallets: dict[str, Wallet] | None = None):
+        self._user_id = user_id
         self._wallets = wallets or {}
 
     @property
-    def user(self) -> User:
-        return self._user
+    def user_id(self) -> int:
+        return self._user_id
 
     @property
     def wallets(self) -> dict:

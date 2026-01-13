@@ -2,6 +2,11 @@
 
 import shlex
 
+from valutatrade_hub.core.exceptions import (
+    ApiRequestError,
+    CurrencyNotFoundError,
+    InsufficientFundsError,
+)
 from valutatrade_hub.core.usecases import (
     buy_currency,
     get_rate,
@@ -54,6 +59,17 @@ def cmd_show_portfolio(args):
     base = (args.get("--base", "USD") or "USD").upper()
     try:
         data = show_portfolio(current_user, base)
+    except CurrencyNotFoundError as e:
+        print(f"Ошибка: {e}")
+        print(
+            "Подсказка: используйте get-rate --from USD --to BTC или проверьте список "
+            "поддерживаемых кодов."
+        )
+        return
+    except ApiRequestError as e:
+        print(f"Ошибка: {e}")
+        print("Подсказка: повторите позже или проверьте сеть.")
+        return
     except ValueError as e:
         print(f"Ошибка: {e}")
         return
@@ -86,7 +102,23 @@ def cmd_buy(args):
             f"- {res['currency']}: было {res['before']:.4f} → "
             f"стало {res['after']:.4f}"
         )
+        print(f"- USD: стало {res['usd_after']:.4f}")
         print(f"Оценочная стоимость покупки: {res['cost_usd']:.2f} USD")
+    except InsufficientFundsError as e:
+        print(f"Ошибка: {e}")
+        print("Подсказка: пополните USD-кошелёк и повторите покупку.")
+    except CurrencyNotFoundError as e:
+        print(f"Ошибка: {e}")
+        print(
+            "Подсказка: проверьте код валюты и используйте get-rate для "
+            "проверки курсов."
+        )
+    except ApiRequestError as e:
+        print(f"Ошибка: {e}")
+        print(
+            "Подсказка: курс недоступен (кеш просрочен и обновление не удалось). "
+            "Повторите позже."
+        )
     except ValueError as e:
         print(f"Ошибка: {e}")
     except KeyError:
@@ -110,7 +142,22 @@ def cmd_sell(args):
             f"- {res['currency']}: было {res['before']:.4f} → "
             f"стало {res['after']:.4f}"
         )
+        print(f"- USD: стало {res['usd_after']:.4f}")
         print(f"Оценочная выручка: {res['revenue_usd']:.2f} USD")
+    except InsufficientFundsError as e:
+        print(f"Ошибка: {e}")
+    except CurrencyNotFoundError as e:
+        print(f"Ошибка: {e}")
+        print(
+            "Подсказка: проверьте код валюты и используйте get-rate для "
+            "проверки курсов."
+        )
+    except ApiRequestError as e:
+        print(f"Ошибка: {e}")
+        print(
+            "Подсказка: курс недоступен (кеш просрочен и обновление не удалось). "
+            "Повторите позже."
+        )
     except ValueError as e:
         print(f"Ошибка: {e}")
     except KeyError:
@@ -119,8 +166,22 @@ def cmd_sell(args):
 
 def cmd_get_rate(args):
     try:
-        rate = get_rate(args["--from"], args["--to"])
-        print(f"Курс {args['--from'].upper()}→{args['--to'].upper()}: {rate}")
+        info = get_rate(args["--from"], args["--to"])
+        src = args["--from"].upper()
+        dst = args["--to"].upper()
+        print(
+            f"Курс {src}→{dst}: "
+            f"{info['rate']} (обновлено: {info['updated_at']})"
+        )
+    except CurrencyNotFoundError as e:
+        print(f"Ошибка: {e}")
+        print(
+            "Подсказка: проверьте код (USD/EUR/BTC/ETH) или используйте get-rate "
+            "--from USD --to BTC."
+        )
+    except ApiRequestError as e:
+        print(f"Ошибка: {e}")
+        print("Подсказка: курс сейчас недоступен. Повторите позже.")
     except ValueError as e:
         print(f"Ошибка: {e}")
     except KeyError:

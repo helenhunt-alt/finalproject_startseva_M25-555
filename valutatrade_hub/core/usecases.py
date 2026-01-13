@@ -2,15 +2,19 @@
 
 import hashlib
 from datetime import datetime
-from pathlib import Path
 
+from valutatrade_hub.decorators import log_action
+from valutatrade_hub.infra.database import DatabaseManager
+from valutatrade_hub.infra.settings import SettingsLoader
+
+from .currencies import get_currency
+from .exceptions import ApiRequestError
 from .models import Portfolio, User, Wallet
-from .utils import _load_json, _save_json
 
-DATA_DIR = Path("data")
-USERS_FILE = DATA_DIR / "users.json"
-PORTFOLIOS_FILE = DATA_DIR / "portfolios.json"
-RATES_FILE = DATA_DIR / "rates.json"
+_settings = SettingsLoader()
+_db = DatabaseManager()
+
+RATES_TTL_SECONDS = int(_settings.get("RATES_TTL_SECONDS", 300))
 
 
 def _generate_user_id(users: list[dict]) -> int:
@@ -31,7 +35,7 @@ def register_user(username: str, password: str) -> User:
     if len(password) < 4:
         raise ValueError("Пароль должен быть не короче 4 символов")
 
-    users = _load_json(USERS_FILE, [])
+    users = _db.load_users()
 
     for user in users:
         if user.get("username") == username:
@@ -57,14 +61,14 @@ def register_user(username: str, password: str) -> User:
         "salt": salt,
         "registration_date": registration_date.isoformat()
     })
-    _save_json(USERS_FILE, users)
+    _db.save_users(users)
 
-    portfolios = _load_json(PORTFOLIOS_FILE, [])
+    portfolios = _db.load_portfolios()
     portfolios.append({
         "user_id": user_id,
         "wallets": {"USD": {"balance": 0.0}}
     })
-    _save_json(PORTFOLIOS_FILE, portfolios)
+    _db.save_portfolios(portfolios)
 
     return new_user
 
@@ -75,7 +79,7 @@ def login_user(username: str, password: str) -> User:
     if not password:
         raise ValueError("Пароль обязателен")
 
-    users = _load_json(USERS_FILE, [])
+    users = _db.load_users()
 
     for user_data in users:
         if user_data.get("username") == username:
@@ -98,40 +102,96 @@ def login_user(username: str, password: str) -> User:
 
 
 def load_rates() -> dict:
-    return _load_json(RATES_FILE, {})
+    return _db.load_rates()
 
 
-def get_rate(from_currency: str, to_currency: str) -> float:
+def _is_rate_fresh(updated_at: str) -> bool:
+    try:
+        dt = datetime.fromisoformat(updated_at)
+    except Exception:
+        return False
+    age = (datetime.now() - dt).total_seconds()
+    return age <= RATES_TTL_SECONDS
+
+
+def _refresh_rates_stub(rates: dict) -> dict:
+    """
+    Заглушка обновления курсов
+    Реальный Parser Service отсутствует
+    Курсы не обновляются, только фиксируется попытка refresh
+    """
+    if not isinstance(rates, dict):
+        rates = {}
+    rates["last_refresh"] = datetime.now().isoformat(timespec="seconds")
+    rates["source"] = "Stub"
+    return rates
+
+
+def get_rate(from_currency: str, to_currency: str) -> dict:
     from_currency = (from_currency or "").upper()
     to_currency = (to_currency or "").upper()
 
     if not from_currency or not to_currency:
         raise ValueError("Код валюты не может быть пустым")
 
+    get_currency(from_currency)
+    get_currency(to_currency)
+
     if from_currency == to_currency:
-        return 1.0
+        return {
+            "rate": 1.0,
+            "updated_at": datetime.now().isoformat(timespec="seconds")
+        }
 
     rates = load_rates()
 
     key = f"{from_currency}_{to_currency}"
     reverse_key = f"{to_currency}_{from_currency}"
 
-    # игнорируем 'source'/'last_refresh': курс — это dict с ключом 'rate'
-    if key in rates and isinstance(rates[key], dict) and "rate" in rates[key]:
-        return float(rates[key]["rate"])
+    rec = rates.get(key)
+    if isinstance(rec, dict) and "rate" in rec:
+        updated_at = rec.get("updated_at")
+        if updated_at and _is_rate_fresh(updated_at):
+            return {"rate": float(rec["rate"]), "updated_at": updated_at}
 
+    rec_rev = rates.get(reverse_key)
+    if isinstance(rec_rev, dict) and "rate" in rec_rev:
+        updated_at = rec_rev.get("updated_at")
+        if updated_at and _is_rate_fresh(updated_at):
+            return {
+                "rate": 1.0 / float(rec_rev["rate"]),
+                "updated_at": updated_at
+            }
+
+    rates = _refresh_rates_stub(rates)
+    _db.save_rates(rates)
+
+    rec = rates.get(key)
     if (
-        reverse_key in rates 
-        and isinstance(rates[reverse_key], dict) 
-        and "rate" in rates[reverse_key]
+        isinstance(rec, dict)
+        and "rate" in rec
+        and rec.get("updated_at")
+        and _is_rate_fresh(rec["updated_at"])
     ):
-        return 1.0 / float(rates[reverse_key]["rate"])
+        return {"rate": float(rec["rate"]), "updated_at": rec["updated_at"]}
 
-    raise ValueError(f"Не удалось получить курс для {from_currency}→{to_currency}")
+    rec_rev = rates.get(reverse_key)
+    if (
+        isinstance(rec_rev, dict)
+        and "rate" in rec_rev
+        and rec_rev.get("updated_at")
+        and _is_rate_fresh(rec_rev["updated_at"])
+    ):
+        return {
+            "rate": 1.0 / float(rec_rev["rate"]),
+            "updated_at": rec_rev["updated_at"]
+        }
+
+    raise ApiRequestError(f"Курс {from_currency}→{to_currency} недоступен")
 
 
 def load_portfolio(user_id: int) -> Portfolio:
-    portfolios = _load_json(PORTFOLIOS_FILE, [])
+    portfolios = _db.load_portfolios()
 
     for p in portfolios:
         if p.get("user_id") == user_id:
@@ -147,7 +207,7 @@ def load_portfolio(user_id: int) -> Portfolio:
 
 
 def save_portfolio(portfolio: Portfolio):
-    portfolios = _load_json(PORTFOLIOS_FILE, [])
+    portfolios = _db.load_portfolios()
 
     for p in portfolios:
         if p.get("user_id") == portfolio.user_id:
@@ -155,7 +215,7 @@ def save_portfolio(portfolio: Portfolio):
                 code: {"balance": wallet.balance}
                 for code, wallet in portfolio.wallets.items()
             }
-            _save_json(PORTFOLIOS_FILE, portfolios)
+            _db.save_portfolios(portfolios)
             return
 
     raise ValueError("Не удалось сохранить портфель")
@@ -175,7 +235,10 @@ def show_portfolio(user: User, base_currency: str = "USD") -> dict:
     total = 0.0
 
     for code, wallet in portfolio.wallets.items():
-        rate = 1.0 if code == base_currency else get_rate(code, base_currency)
+        if code == base_currency:
+            rate = 1.0
+        else:
+            rate = float(get_rate(code, base_currency)["rate"])
         value = wallet.balance * rate
         total += value
 
@@ -204,6 +267,7 @@ def _ensure_wallet(portfolio: Portfolio, currency: str) -> Wallet:
     return wallet
 
 
+@log_action("BUY", verbose=True)
 def buy_currency(user: User, currency: str, amount: float):
     if amount <= 0:
         raise ValueError("'amount' должен быть положительным числом")
@@ -211,12 +275,15 @@ def buy_currency(user: User, currency: str, amount: float):
         raise ValueError("Код валюты не может быть пустым")
 
     currency = currency.upper()
+    get_currency(currency)
+
     portfolio = load_portfolio(user.user_id)
 
     usd_wallet = _ensure_wallet(portfolio, "USD")
     cur_wallet = _ensure_wallet(portfolio, currency)
 
-    rate = get_rate(currency, "USD")
+    rate_info = get_rate(currency, "USD")
+    rate = float(rate_info["rate"])
     cost_usd = amount * rate
 
     usd_wallet.withdraw(cost_usd)
@@ -237,6 +304,7 @@ def buy_currency(user: User, currency: str, amount: float):
     }
 
 
+@log_action("SELL", verbose=True)
 def sell_currency(user: User, currency: str, amount: float):
     if amount <= 0:
         raise ValueError("'amount' должен быть положительным числом")
@@ -244,6 +312,8 @@ def sell_currency(user: User, currency: str, amount: float):
         raise ValueError("Код валюты не может быть пустым")
 
     currency = currency.upper()
+    get_currency(currency)
+    
     portfolio = load_portfolio(user.user_id)
 
     usd_wallet = _ensure_wallet(portfolio, "USD")
@@ -252,7 +322,8 @@ def sell_currency(user: User, currency: str, amount: float):
     if cur_wallet is None:
         raise ValueError(f"У вас нет кошелька '{currency}'")
 
-    rate = get_rate(currency, "USD")
+    rate_info = get_rate(currency, "USD")
+    rate = float(rate_info["rate"])
     revenue_usd = amount * rate
 
     before = cur_wallet.balance
