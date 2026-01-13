@@ -1,9 +1,9 @@
 [project]
-name = "finalproject-startseva-m25-555"
+name = "finalproject_startseva_m25-555"
 version = "0.1.0"
 description = ""
 authors = [
-    {name = "Your Name",email = "you@example.com"}
+    {name = "Startseva Elena",email = "startseva.helen.v@yandex.ru"}
 ]
 readme = "README.md"
 requires-python = ">=3.12"
