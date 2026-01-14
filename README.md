@@ -17,16 +17,20 @@ CLI-приложение для симуляции торговли валюта
 - получение и кеширование курсов валют с учётом TTL
 - логирование ключевых действий пользователя
 - обработка и проброс доменных исключений
+- обновление курсов из внешних API (CoinGecko, ExchangeRate-API) через Parser Service  
+- просмотр актуальных курсов из локального кеша (`show-rates`)
 
 ---
 
 ## Структура проекта
 
+```bash
 finalproject_startseva_m25-555/
 ├── data/
 │   ├── users.json
 │   ├── portfolios.json
-│   └── rates.json
+│   ├── rates.json
+│   └── exchange_rates.json
 ├── valutatrade_hub/
 │   ├── __init__.py
 │   ├── decorators.py
@@ -34,7 +38,7 @@ finalproject_startseva_m25-555/
 │   ├── core/
 │   │   ├── __init__.py
 │   │   ├── models.py
-│   │   ├── exceptions
+│   │   ├── exceptions.py
 │   │   ├── usecases.py
 │   │   ├── currencies.py
 │   │   └── utils.py
@@ -44,13 +48,21 @@ finalproject_startseva_m25-555/
 │   ├── infra/
 │   │   ├── __init__.py
 │   │   ├── database.py
-│   └── └── settings.py
+│   │   └── settings.py
+│   └── parser_service/
+│       ├── __init__.py
+│       ├── config.py
+│       ├── api_clients.py
+│       ├── updater.py
+│       ├── storage.py
+│       └── scheduler.py
 ├── .gitignore
 ├── main.py
 ├── Makefile
 ├── poetry.lock
 ├── pyproject.toml
 └── README.md
+```
 
 ---
 
@@ -60,6 +72,33 @@ finalproject_startseva_m25-555/
 - **Wallet** — кошелёк одной валюты с балансом и операциями пополнения/списания
 - **Portfolio** — портфель пользователя, содержащий набор кошельков
 - **Currency** — описание валюты и её иерархии (fiat / crypto)
+
+---
+
+## Parser Service и обновление курсов
+
+Отдельный Parser Service отвечает за получение и обновление курсов валют из двух внешних источников:
+
+- CoinGecko — криптовалюты (BTC, ETH, SOL)
+- ExchangeRate-API — фиатные валюты (EUR, GBP, RUB) относительно USD
+
+Курсы приводятся к единому формату и сохраняются в:
+
+- ```data/exchange_rates.json``` — история измерений (журнал)
+- ```data/rates.json``` — актуальный кэш для Core Service
+
+Основные элементы:
+
+- ```config.py``` — хранит настройки (списки валют, URL, пути к файлам, таймауты, загрузка API-ключа из переменных окружения)
+- ```api_clients.py``` — клиенты CoinGecko и ExchangeRate-API с обработкой сетевых ошибок и валидацией ответов
+- ```updater.py``` — объединяет данные от всех клиентов, обновляет кэш и журнал, логирует шаги
+- ```storage.py``` — атомарная запись JSON-файлов, работа с историей и текущим срезом курсов
+
+Для работы ExchangeRate-API требуется ключ в переменной окружения:
+
+```bash
+export EXCHANGERATE_API_KEY="ВАШ_КЛЮЧ"
+```
 
 ---
 
@@ -111,6 +150,35 @@ sell --currency BTC --amount 0.01
 get-rate --from BTC --to USD
 ```
 
+## Команды работы с курсами:
+
+```bash
+update-rates
+show-rates --top 10
+show-rates --currency EUR
+get-rate --from EUR --to USD
+```
+
+Примеры:
+
+```bash
+> update-rates
+INFO: Starting rates update...
+Update successful. Total rates updated: 6. Last refresh: 2026-01-14T15:14:15Z
+
+> show-rates --top 3
+Rates from cache (updated at 2026-01-14T15:14:15Z):
+- BTC_USD: 96823.00
+- ETH_USD: 3353.14
+- SOL_USD: 146.84
+```
+
+---
+
+## Запись демонстрации работы CLI
+
+[![asciicast](https://asciinema.org/a/cji59t1xyfCb9Fc1.svg)](https://asciinema.org/a/cji59t1xyfCb9Fc1)
+
 ---
 
 ## Запуск проекта
@@ -123,6 +191,11 @@ make install
 Запуск приложения:
 ```bash
 make project
+```
+
+Перед работой с фиатными курсами нужно задать ключ:
+```bash
+export EXCHANGERATE_API_KEY="ВАШ_КЛЮЧ"
 ```
 
 ## Примечание

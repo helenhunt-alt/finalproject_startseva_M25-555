@@ -3,6 +3,7 @@
 import hashlib
 from datetime import datetime
 
+from .currencies import get_currency
 from .exceptions import InsufficientFundsError
 
 
@@ -128,6 +129,7 @@ class Portfolio:
         if not currency_code:
             raise ValueError("Код валюты не может быть пустым")
         currency_code = currency_code.upper()
+        get_currency(currency_code)
         if currency_code in self._wallets:
             raise ValueError(f"Кошелёк '{currency_code}' уже существует")
         self._wallets[currency_code] = Wallet(currency_code)
@@ -136,3 +138,26 @@ class Portfolio:
         if not currency_code:
             return None
         return self._wallets.get(currency_code.upper())
+
+    def get_total_value(self, base_currency: str = "USD", rate_provider=None) -> float:
+        """
+        Считает суммарную стоимость портфеля в base_currency.
+        rate_provider: callable(from_code, to_code) -> float или dict с ключом "rate".
+        """
+        base_currency = (base_currency or "").upper()
+        if not base_currency:
+            raise ValueError("Код валюты не может быть пустым")
+        get_currency(base_currency)
+
+        total = 0.0
+        for code, wallet in self._wallets.items():
+            code = code.upper()
+            if code == base_currency:
+                total += wallet.balance
+                continue
+            if rate_provider is None:
+                raise ValueError("Не передан rate_provider для конвертации валют")
+            info = rate_provider(code, base_currency)
+            rate = float(info["rate"]) if isinstance(info, dict) else float(info)
+            total += wallet.balance * rate
+        return total

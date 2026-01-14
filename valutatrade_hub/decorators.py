@@ -12,11 +12,11 @@ def log_action(action: str, verbose: bool = False):
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            logger = logging.getLogger()
+            logger = logging.getLogger(__name__)
 
-            user = args[0] if len(args) > 0 else None
-            currency_code = args[1] if len(args) > 1 else None
-            amount = args[2] if len(args) > 2 else None
+            user = args[0] if len(args) > 0 else kwargs.get("user")
+            currency_code = args[1] if len(args) > 1 else kwargs.get("currency")
+            amount = args[2] if len(args) > 2 else kwargs.get("amount")
 
             username = getattr(user, "username", None)
             user_id = getattr(user, "user_id", None)
@@ -51,11 +51,10 @@ def log_action(action: str, verbose: bool = False):
                 return result
 
             except Exception as e:
-                logger.info(
-                    (
-                        "%s user='%s' user_id=%s currency='%s' amount=%s result=ERROR "
-                        "error_type=%s error_message='%s'"
-                    ),                    action,
+                logger.error(
+                    "%s user='%s' user_id=%s currency='%s' amount=%s result=ERROR "
+                    "error_type=%s error_message='%s'",
+                    action,
                     username,
                     user_id,
                     currency_code,

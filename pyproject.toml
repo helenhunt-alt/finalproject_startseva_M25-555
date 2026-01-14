@@ -1,14 +1,15 @@
 [project]
 name = "finalproject_startseva_m25-555"
 version = "0.1.0"
-description = ""
+description = "Console application for managing a multi-currency wallet"
 authors = [
     {name = "Startseva Elena",email = "startseva.helen.v@yandex.ru"}
 ]
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "prettytable (>=3.17.0,<4.0.0)"
+    "prettytable (>=3.17.0,<4.0.0)",
+    "requests (>=2.32.5,<3.0.0)"
 ]
 
 [tool.poetry]

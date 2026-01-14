@@ -1,8 +1,0 @@
-{
-  "BTC_USD": {"rate": 59300.0, "updated_at": "2026-01-13T10:00:00"},
-  "ETH_USD": {"rate": 3720.0,  "updated_at": "2026-01-13T10:00:00"},
-  "EUR_USD": {"rate": 1.08,    "updated_at": "2026-01-13T10:00:00"},
-  "USD_USD": {"rate": 1.0,     "updated_at": "2026-01-13T10:00:00"},
-  "source": "Test",
-  "last_refresh": "2026-01-13T10:00:00"
-}

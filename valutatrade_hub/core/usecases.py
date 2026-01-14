@@ -1,11 +1,18 @@
 # usecases.py
 
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 
 from valutatrade_hub.decorators import log_action
 from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
+from valutatrade_hub.parser_service import storage
+from valutatrade_hub.parser_service.api_clients import (
+    CoinGeckoClient,
+    ExchangeRateApiClient,
+)
+from valutatrade_hub.parser_service.config import ParserConfig
+from valutatrade_hub.parser_service.updater import RatesUpdater
 
 from .currencies import get_currency
 from .exceptions import ApiRequestError
@@ -105,26 +112,27 @@ def load_rates() -> dict:
     return _db.load_rates()
 
 
+def _try_refresh_rates() -> None:
+    config = ParserConfig()
+    config.validate()
+    updater = RatesUpdater(
+        config=config,
+        api_clients=[CoinGeckoClient(config), ExchangeRateApiClient(config)],
+        storage_module=storage,
+    )
+    updater.run_update()
+
+
 def _is_rate_fresh(updated_at: str) -> bool:
     try:
-        dt = datetime.fromisoformat(updated_at)
+        s = updated_at
+        if isinstance(s, str) and s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
     except Exception:
         return False
-    age = (datetime.now() - dt).total_seconds()
+    age = (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds()
     return age <= RATES_TTL_SECONDS
-
-
-def _refresh_rates_stub(rates: dict) -> dict:
-    """
-    Заглушка обновления курсов
-    Реальный Parser Service отсутствует
-    Курсы не обновляются, только фиксируется попытка refresh
-    """
-    if not isinstance(rates, dict):
-        rates = {}
-    rates["last_refresh"] = datetime.now().isoformat(timespec="seconds")
-    rates["source"] = "Stub"
-    return rates
 
 
 def get_rate(from_currency: str, to_currency: str) -> dict:
@@ -144,17 +152,18 @@ def get_rate(from_currency: str, to_currency: str) -> dict:
         }
 
     rates = load_rates()
+    pairs = rates.get("pairs", {}) if isinstance(rates, dict) else {}
 
     key = f"{from_currency}_{to_currency}"
     reverse_key = f"{to_currency}_{from_currency}"
 
-    rec = rates.get(key)
+    rec = pairs.get(key)
     if isinstance(rec, dict) and "rate" in rec:
         updated_at = rec.get("updated_at")
         if updated_at and _is_rate_fresh(updated_at):
             return {"rate": float(rec["rate"]), "updated_at": updated_at}
 
-    rec_rev = rates.get(reverse_key)
+    rec_rev = pairs.get(reverse_key)
     if isinstance(rec_rev, dict) and "rate" in rec_rev:
         updated_at = rec_rev.get("updated_at")
         if updated_at and _is_rate_fresh(updated_at):
@@ -163,30 +172,23 @@ def get_rate(from_currency: str, to_currency: str) -> dict:
                 "updated_at": updated_at
             }
 
-    rates = _refresh_rates_stub(rates)
-    _db.save_rates(rates)
+    try:
+        _try_refresh_rates()
+    except Exception as e:
+        raise ApiRequestError(f"Курс {from_currency}→{to_currency} недоступен ({e})")
 
-    rec = rates.get(key)
-    if (
-        isinstance(rec, dict)
-        and "rate" in rec
-        and rec.get("updated_at")
-        and _is_rate_fresh(rec["updated_at"])
-    ):
-        return {"rate": float(rec["rate"]), "updated_at": rec["updated_at"]}
-
-    rec_rev = rates.get(reverse_key)
-    if (
-        isinstance(rec_rev, dict)
-        and "rate" in rec_rev
-        and rec_rev.get("updated_at")
-        and _is_rate_fresh(rec_rev["updated_at"])
-    ):
+    rates = load_rates()
+    pairs = rates.get("pairs", {}) if isinstance(rates, dict) else {}
+    rec = pairs.get(key)
+    if isinstance(rec, dict) and "rate" in rec:
+        return {"rate": float(rec["rate"]), "updated_at": rec.get("updated_at")}
+    rec_rev = pairs.get(reverse_key)
+    if isinstance(rec_rev, dict) and "rate" in rec_rev:
         return {
-            "rate": 1.0 / float(rec_rev["rate"]),
-            "updated_at": rec_rev["updated_at"]
+            "rate": float(rec["rate"]),
+            "updated_at": rec.get("updated_at"),
         }
-
+    
     raise ApiRequestError(f"Курс {from_currency}→{to_currency} недоступен")
 
 
